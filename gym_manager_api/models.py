@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import (models, IntegrityError)
 from .validators import phone_number_validator
 import datetime
 from django.utils import timezone
@@ -12,7 +12,7 @@ class User(models.Model):
 
     name = models.CharField(max_length=25)
     second_name = models.CharField(max_length=25)
-    phone_number = models.CharField(max_length=15, validators=[phone_number_validator])    
+    phone_number = models.CharField(max_length=15, validators=[phone_number_validator])
 
 
 class Student(User):
@@ -27,8 +27,16 @@ class Classroom(models.Model):
     name = models.CharField(max_length=25)
 
 
+class Group(models.Model):
+    name = models.CharField(max_length=25)
+    students = models.ManyToManyField(Student)
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Scheduler(models.Model):
-    
+
     DAYS = [
         ("MON", "Monday"),
         ("TUE", "Tuesday"),
@@ -48,43 +56,70 @@ class Scheduler(models.Model):
     )
     classroom = models.ManyToManyField(Classroom)
     instructor = models.ManyToManyField(Instructor)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='whereabouts', null=True, blank=True)
 
-    def get_all_dates(self):
+    def get_all_dates(self, generate_events=False):
 
         last = self.last or (datetime.datetime.now() + datetime.timedelta(weeks=48)).date()
 
-        return {f'{self.group.all()[0]}':pd.date_range(start=self.first, end=last,
-                freq=f'W-{self.repeat_on}')}
-    
-    def get_dates_in_range(self, first, last):
+        dates = pd.date_range(start=self.first, end=last, freq=f'W-{self.repeat_on}')
+        if generate_events:
+            for date in dates:
+                    print(date)
+
+        return {f'{self.group.all()[0]}':dates}
+
+    def create_event(self, date):
+        print(Event.objects.get(date=date, hour=self.hour, group=self.group))
+        try:
+            e = Event.objects.create(date=date, hour=self.hour, group=self.group)
+            e.instructor.set(self.instructor.all())
+            e.attendees.set(self.group.students.all())
+            e.save()
+        except IntegrityError:
+            pass
+
+    def get_dates_in_range(self, first: datetime.datetime, last: datetime.datetime,
+                           generate_events=False):
+        """
+        will return dates in between first and last for this scheduler as a dict
+        """
+        if not self.last:
+            self.last = last
+
         if first > self.last or self.last< first:
-            return
-        
-        if self.first > first and last < self.last: 
+            return {}
+
+        if self.first > first and last < self.last:
             first = self.first
             last = self.last
 
         elif self.first > first and self.last < last:
             first = self.first
-        
-        return {f'{self.group.all()[0]}':pd.date_range(start=first, end=last,
-                freq=f'W-{self.repeat_on}')}
 
+        if self.group:
+            dates = pd.date_range(start=first, end=last,freq=f'W-{self.repeat_on}')
+            if generate_events:
+                for date in dates:
+                    self.create_event(date)
 
-class Group(models.Model):
-    name = models.CharField(max_length=25)
-    whereabouts = models.ManyToManyField(Scheduler, related_name='group')
-    students = models.ManyToManyField(Student)
+            return {f'{self.group}': dates}
 
-    def __str__(self) -> str:
-        return self.name
+        return {}
 
 
 class Event(models.Model):
     date = models.DateTimeField(null=True, blank=True)
-    group = models.ManyToManyField(Group)
+    hour = models.TimeField(blank=False, null=False, default=datetime.time(10, 30))
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, null=True, blank=True)
     instructor = models.ManyToManyField(Instructor)
     attendees = models.ManyToManyField(Student)
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['date', 'hour', 'group'], name='unique_event'
+            )
+        ]
 
 
 class EventException(models.Model):

@@ -36,7 +36,7 @@ class SchedulerViewSerializer(serializers.HyperlinkedModelSerializer):
 class EventViewSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Event
-        fields = ['date', 'group', 'instructor', 'attendees']
+        fields = ['date', 'hour', 'group', 'instructor', 'attendees']
 
 
 class EventExceptionViewSerializer(serializers.HyperlinkedModelSerializer):
