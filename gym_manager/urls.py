@@ -15,13 +15,15 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from gym_manager_api.views import (GroupViewSet, StudentViewSet, InstructorViewSet, ClassroomViewSet, SchedulerViewSet, EventViewSet, EventExceptionViewSet)
+from gym_manager_api.views import (GroupViewSet, GroupWithSchedulers, StudentViewSet, InstructorViewSet, ClassroomViewSet, SchedulerViewSet, EventViewSet, EventExceptionViewSet)
 from django.urls import include, path
 from rest_framework import routers
-from gym_manager_calendar import views
+from gym_manager_calendar.views import scheduler
+from gym_manager_attendance.views import attendance
+
 
 router = routers.DefaultRouter()
-router.register(r'groups', GroupViewSet)
+# router.register(r'groups', GroupViewSet, basename="Group")
 router.register(r'students', StudentViewSet)
 router.register(r'instructors', InstructorViewSet)
 router.register(r'classrooms', ClassroomViewSet)
@@ -31,7 +33,13 @@ router.register(r'events', EventExceptionViewSet)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("calendar/", views.calendar),
+    path("scheduler/", scheduler),
+    path("attendance/", attendance),
     path('api/', include(router.urls)),
+    path('api/', include(router.urls)),
+    path('api/groups/', GroupViewSet.as_view()),
+    path('api/create_group/', GroupWithSchedulers.as_view()),
+
+
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework'))
 ]
