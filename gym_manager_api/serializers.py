@@ -1,4 +1,5 @@
-from .models import (Group, Student, Instructor, Classroom, Scheduler, Event, EventException)
+from .models import (Group, Student, Instructor, Classroom,
+                     Scheduler, Event, EventException, Attendance)
 from rest_framework import serializers
 
 
@@ -6,7 +7,7 @@ from rest_framework import serializers
 class GroupViewSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Group
-        fields = ['id', 'name', 'time_and_place', 'instructors', 'classrooms']
+        fields = ['id', 'name', 'time_and_place', 'instructors', 'classrooms', 'repeats_on']
 
 class GroupCreateSerializer(serializers.Serializer):
     name = serializers.CharField()
@@ -18,6 +19,7 @@ class GroupCreateSerializer(serializers.Serializer):
 class SchedulerCreateSerializer(serializers.Serializer):
     first = serializers.DateTimeField()
     last = serializers.DateTimeField()
+    start_hour = serializers.TimeField()
     duration = serializers.DurationField()
     repeat_on = serializers.CharField()
     classroom = serializers.PrimaryKeyRelatedField(queryset=Classroom.objects.all())
@@ -41,7 +43,7 @@ class InstructorViewSerializer(serializers.HyperlinkedModelSerializer):
 class StudentViewSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Student
-        fields = ['name', 'second_name', 'phone_number']
+        fields = ['id', 'name', 'second_name', 'phone_number']
 
 
 class ClassroomViewSerializer(serializers.HyperlinkedModelSerializer):
@@ -53,7 +55,7 @@ class ClassroomViewSerializer(serializers.HyperlinkedModelSerializer):
 class SchedulerViewSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Scheduler
-        fields = ['first', 'duration', 'last', 'repeat_on', 'classroom', 'instructor']
+        fields = ['first', 'duration', 'last', 'repeat_on', 'classroom', 'instructor', 'students']
 
 
 
@@ -67,3 +69,16 @@ class EventExceptionViewSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = EventException
         fields = ['move_from', 'move_to',  'group', 'instructor', 'attendees']
+
+
+class AttendanceViewSerializer(serializers.Serializer):
+    state = serializers.CharField()
+    group = serializers.PrimaryKeyRelatedField(queryset=Group.objects.all())
+    student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all())
+    date = serializers.DateField()
+
+
+    def create(self, validated_data):
+        attendance = Attendance(**validated_data)
+        attendance.save()
+        return attendance

@@ -1,11 +1,13 @@
-from .models import (Group, Student, Instructor, Classroom, Scheduler, Event, EventException)
+from .models import (Group, Student, Instructor, Classroom,
+                     Scheduler, Event, EventException, Attendance)
 from rest_framework import viewsets
 from rest_framework import permissions
-from .serializers import (SchedulerCreateSerializer, GroupViewSerializer,GroupCreateSerializer, ClassroomViewSerializer, StudentViewSerializer, InstructorViewSerializer, SchedulerViewSerializer, EventViewSerializer)
+from .serializers import (SchedulerCreateSerializer, GroupViewSerializer,GroupCreateSerializer,
+                          ClassroomViewSerializer, StudentViewSerializer, InstructorViewSerializer,
+                          SchedulerViewSerializer, EventViewSerializer, AttendanceViewSerializer)
 from django.http import Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from datetime import datetime
 from dateutil import parser
 
 class GroupWithSchedulers(APIView):
@@ -31,7 +33,8 @@ class GroupWithSchedulers(APIView):
                               "repeat_on": item["repeat_on"],
                               "classroom": item["location"]["id"],
                               "instructor": item["instructor"]["id"],
-                              "group": group.id
+                              "group": group.id,
+                              "start_hour" : start.strftime("%H:%M")
                               })
             print(item_data)
             scheduler_serializer = SchedulerCreateSerializer(data=item_data)
@@ -42,9 +45,21 @@ class GroupWithSchedulers(APIView):
                 print(scheduler_serializer.errors)
                 return Response(status=404, data=scheduler_serializer.error_messages)
 
-
-
         return Response(status=200)
+
+
+class GroupDetail(APIView):
+
+    def get_object(self, pk):
+        try:
+            return Group.objects.get(pk=pk)
+        except Group.DoesNotExist:
+            raise Http404
+
+    def get(self, request, pk):
+        group = self.get_object(pk)
+        serializer = GroupViewSerializer(group)
+        return Response(serializer.data)
 
 
 class GroupViewSet(APIView):
@@ -62,6 +77,7 @@ class GroupViewSet(APIView):
             serializer.save()
             return Response(status=200)
         return Response(status=400, data=serializer.error_messages)
+
 
 class StudentViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
@@ -84,7 +100,7 @@ class ClassroomViewSet(viewsets.ModelViewSet):
 class SchedulerViewSet(viewsets.ModelViewSet):
     queryset = Scheduler.objects.all()
     serializer_class = SchedulerViewSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # permission_classes = [permissions.IsAuthenticated]
 
 
 class EventViewSet(viewsets.ModelViewSet):
@@ -97,3 +113,34 @@ class EventExceptionViewSet(viewsets.ModelViewSet):
     queryset = Event.objects.all()
     serializer_class = EventException
     permission_classes = [permissions.IsAuthenticated]
+
+
+class AttendanceViewSet(APIView):
+    queryset = Attendance.objects.all()
+
+    def get(self, request, format=None):
+        queryset =  Attendance.objects.all()
+        serializer =  AttendanceViewSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, format=None):
+        data = request.data
+        serializer =  AttendanceViewSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(status=200)
+        return Response(status=400, data=serializer.error_messages)
+
+
+class AttendanceDetail(APIView):
+
+    def get_object(self, pk):
+        try:
+            return Attendance.objects.get(pk=pk)
+        except Attendance.DoesNotExist:
+            raise Http404
+
+    def get(self, request, pk):
+        group = self.get_object(pk)
+        serializer = AttendanceViewSerializer(group)
+        return Response(serializer.data)
