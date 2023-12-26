@@ -1,0 +1,2 @@
+class AttendanceException(Exception):
+    pass

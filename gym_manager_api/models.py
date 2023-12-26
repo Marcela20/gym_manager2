@@ -1,5 +1,6 @@
 from django.db import (models, IntegrityError)
 from .validators import phone_number_validator
+from .exceptions import AttendanceException
 import datetime
 from django.utils import timezone
 import pandas as pd
@@ -22,6 +23,21 @@ class User(models.Model):
 class Student(User):
     role = models.CharField(default='student', max_length=25)
 
+    def can_attend(self, date, scheduler_id):
+        scheduler=Scheduler(pk=scheduler_id)
+        for sub in self.subscription.all():
+            if sub.check_valid(date, scheduler):
+                return True
+        return False
+
+    def check_attendance(self, date, scheduler_id):
+        try:
+            a = self.attendance.get(date=date, scheduler=Scheduler(pk=scheduler_id))
+        except Attendance.DoesNotExist:
+            a = None
+        if a:
+            return a.state
+        return "-"
 
 class Instructor(User):
     role = models.CharField(default='instructor', max_length=25)
@@ -37,37 +53,15 @@ class Classroom(models.Model):
 
 class Group(models.Model):
     name = models.CharField(max_length=25)
-    # students = models.ManyToManyField(Student)
 
     @property
     def students_list(self):
         students = set()
         for scheduler in self.whereabouts.all():
-            # [students.add(student.full_name) for student in scheduler.students.all()]
             [students.add(student) for student in scheduler.students.all()]
 
 
         return list(students)
-
-    # def get_attendance(self):
-    #     schedulers = self.whereabouts.all()
-    #     if not schedulers:
-    #         return []
-    #     dates = schedulers[0].get_all_dates()
-    #     students_list = self.students_list
-    #     students = [{student.full_name for student in students_list}]
-
-    #     df1 = pd.DataFrame(index=dates, columns=students)
-
-    #     if len(schedulers)>1:
-    #         for entry in schedulers[1:]:
-    #             entry_dates = entry.get_all_dates()
-    #             df2 = pd.DataFrame(index=entry_dates, columns=students)
-    #             df1 = pd.concat([df1,df2], join='inner', axis=0)
-    #     df1 = df1.sort_index()
-    #     df1 = df1.fillna("hi")
-    #     df1.index = df1.index.strftime('%a %d/%m/%Y')
-    #     return df1.T
 
     @property
     def all_dates(self):
@@ -84,6 +78,7 @@ class Group(models.Model):
                 s_df = pd.DataFrame(index=s_dates[1], columns=["scheduler_id"])
                 s_df.fillna(s_dates[0], inplace=True)
                 df = pd.concat([df, s_df])
+        df = df.sort_index()
         df.index = pd.to_datetime(df.index).strftime('%a %d/%m/%Y')
         return df
 
@@ -170,15 +165,11 @@ class Scheduler(models.Model):
         return (self.id, dates)
 
     def create_event(self, date):
-        # TODO do get in try and create in except
-        try:
-            e = Event.objects.create(date=date, end_date=date+self.duration, group=self.group)
-            e.instructor.set(self.instructor.all())
-            e.attendees.set(self.group.students.all())
-            e.classroom.set(self.classroom.all())
-            e.save()
-        except IntegrityError:
-            e = Event.objects.get(date=date, group=self.group)
+        e = Event.objects.get_or_create(date=date, end_date=date+self.duration, group=self.group)
+        e.instructor.set(self.instructor.all())
+        e.attendees.set(self.group.students.all())
+        e.classroom.set(self.classroom.all())
+        e.save()
         return {"text": self.group.name, "startDate": date, "endDate": e.end_date, 'id': e.id, 'location':e.classroom.all()[0].name}
 
     def get_dates_in_range(self, first: datetime.datetime, last: datetime.datetime,
@@ -249,12 +240,8 @@ class EventException(models.Model):
 
 class Attendance(models.Model):
     STATES = [
-        ("PAI", "paid"),
-        ("UNP", "unpaid"),
-        ("PPR", "paid present"),
-        ("UPR", "unpaid present"),
-        ("UNP", "unpaid not present"),
-        ("PNP", "paid not present"),
+        ("PRE", "present"),
+        ("ABS", "absent"),
         ]
     class Meta:
         constraints = [
@@ -268,52 +255,70 @@ class Attendance(models.Model):
     state = models.CharField(
         max_length=3,
         choices=STATES,
-        default="UNP",
         null=True,
         blank=True
     )
     date = models.DateField(null=False, blank=False, default=timezone.now)
 
+    def _get_valid_subscription(self):
+        subscriptions = self.student.subscription.filter(schedulers__in=[self.scheduler])
+        if subscriptions:
+            for subscription in subscriptions:
+                if subscription.check_valid(self.date):
+                    return subscription
+        return None
+
     @property
     def is_paid(self):
-        subscriptions = self.student.subscription.filter(schedulers__in=[self.scheduler])
-        for s in subscriptions:
-            if s.valid:
-                return True
-            break
+        if self._get_valid_subscription():
+            return True
         return False
 
+    def remove_entrance_from_subscription(self, state):
+        sub = self._get_valid_subscription()
+        if sub:
+            if state in ['PRE']:
+                # TODO should we also  do that when absent?
+                sub.remove_entrance()
 
 class Subscription(models.Model):
     '''
     it will be possible to either have number of entrances, date range
     or both: x entrances, valid till may
-    We can also assign the pass to schedulers
+    We can also assign the subscription to schedulers
     '''
     student = models.ForeignKey(Student, on_delete=models.SET_NULL, related_name='subscription', null=True, blank=True)
     schedulers = models.ManyToManyField(Scheduler)
     entrances = models.IntegerField(null=False, blank=False)
-    valid_until = models.DateField(null=False, blank=False, default=timezone.now)
-    valid_since = models.DateField(null=False, blank=False, default=timezone.now)
+    valid_start = models.DateField(null=False, blank=False, default=timezone.now)
+    valid_stop = models.DateField(null=False, blank=False, default=timezone.now)
     entrances_left = models.IntegerField(null=False, blank=False)
 
-    @property
-    def valid(self):
-        if  self.valid_until and datetime.datetime.now().date() <= self.valid_until:
-            if self.entrances_left:
-                if  self.entrances_left > 0:
+    def check_valid_entrances(self) -> None:
+        if self.entrances_left and self.entrances_left == 0:
+            return False
+        return True
+
+    def check_valid_dates(self, date) -> None:
+        if self.valid_start and self.valid_stop:
+            if date >= self.valid_start and date <= self.valid_stop:
+                return True
+            return False
+
+    def check_valid(self, date, scheduler=None) -> None:
+        if self.check_valid_dates(date) and self.check_valid_entrances():
+            if scheduler:
+                if scheduler in self.schedulers.all():
                     return True
                 return False
-        else:
-            if self.entrances_left > 0:
-                return True
+            return True
         return False
 
-    def count_attendance(self):
+    def remove_entrance(self):
         if self.entrances_left and self.entrances_left > 0 :
             self.entrances_left = self.entrances_left - 1
             self.save()
         else:
-            raise Exception("no entrances left")
+            raise AttendanceException("no entrances left")
 
 

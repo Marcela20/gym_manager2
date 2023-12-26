@@ -22,18 +22,25 @@ def get_dates_as_columns(request):
 
 def get_group_attendance(group_id):
     group = Group.objects.get(id=int(group_id))
-    attendance = group.attendance.all()
-    for a in attendance:
-        print(a.is_paid)
+    dates = group.all_dates
     students = group.students_list
-    sub = students[0].subscription.all()[0]
-    data = [{'index': a.student.full_name, 'id': a.student.id, a.date.strftime('%a %d/%m/%Y'): a.state, 'paid':a.is_paid} for a in attendance]
-    [data.append({'index': student.full_name, 'id': student.id}) for student in students]
-    if data:
-        df = pd.DataFrame(data).set_index('index').groupby(level=0).agg('first')
-        df =  df.reset_index().to_dict('records')
-        return df
-    return []
+    rows = []
+    for student in students:
+        values = {
+            row[0] :{
+                "text": student.check_attendance(
+                    datetime.strptime(row[0],'%a %d/%m/%Y').date(), row[1]
+                    ),
+                "paid": student.can_attend(
+                    datetime.strptime(row[0], '%a %d/%m/%Y').date(), row[1]
+                    )} for row in dates.itertuples(index=True)}
+        data = {'index': student.full_name, 'id': student.id}
+        data.update(values)
+        rows.append(data)
+
+    df = pd.DataFrame(rows).set_index('index').groupby(level=0).agg('first')
+    df =  df.reset_index().to_dict('records')
+    return df
 
 
 class AttendanceCheker(APIView):
@@ -49,19 +56,19 @@ class AttendanceCheker(APIView):
         group_id = request.GET.get('group_id')
         group = Group.objects.get(id=int(group_id))
         for student_id, dates in added_attendance.items():
-            for date, state in dates.items():
-                scheduler_id = dates["scheduler_id"]
-                if date in ("id", "index", "scheduler_id"):
-                    continue
-
+            for date, values in dates.items():
+                scheduler_id = values["scheduler_id"]
                 scheduler = Scheduler.objects.get(id=int(scheduler_id))
                 attendance = Attendance.objects.get_or_create(
                     group=group,
                     scheduler=scheduler,
                     student=Student(pk=student_id),
-                    date=datetime.strptime(date, '%a %d/%m/%Y'))[0]
-
-                attendance.state = state
+                    date=datetime.strptime(date, '%a %d/%m/%Y').date())[0]
+                if values['text'] in ["PRE", "ABS"]:
+                    attendance.state = values['text']
+                else:
+                        raise Exception(f"cant set {values['text']} as state")
+                attendance.remove_entrance_from_subscription(values['text'])
                 attendance.save()
                 group.attendance.add(attendance)
 
